@@ -17,6 +17,16 @@ HolyClaude ships with two compose files:
 
 ## Environment Variables
 
+Docker Compose also supports a local `.env` file for variable interpolation. HolyClaude uses that in `docker-compose.full.yaml` for host-side port and bind-mount paths. These values are read by Compose on the host and are not passed into the container unless you also list them under `environment:`.
+
+### Compose-Level Host Mappings
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HOLYCLAUDE_HOST_PORT` | `3001` | Host port mapped to container port `3001` |
+| `HOLYCLAUDE_HOST_CLAUDE_DIR` | `./data/claude` | Host path bind-mounted to `/home/claude/.claude` |
+| `HOLYCLAUDE_HOST_WORKSPACE_DIR` | `./workspace` | Host path bind-mounted to `/workspace` |
+
 ### Core
 
 | Variable | Default | Description |

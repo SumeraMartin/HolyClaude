@@ -49,11 +49,13 @@ Runs every time the container starts. Responsibilities:
 
 1. **UID/GID remapping** — Adjusts the `claude` user's UID/GID to match `PUID`/`PGID` environment variables. This prevents permission mismatches between container and host files.
 
-2. **File pre-creation** — Ensures `~/.claude.json` exists as a file (not a directory). Docker creates bind-mount targets as directories if they don't exist, which breaks Claude Code.
+2. **Workspace ownership fix** — Repairs the top-level `/workspace` bind mount if Docker auto-created it as `root:root` on first start.
 
-3. **Bootstrap trigger** — Checks for sentinel file `.holyclaude-bootstrapped`. If absent, runs `bootstrap.sh`.
+3. **File pre-creation** — Ensures `~/.claude.json` exists as a file (not a directory). Docker creates bind-mount targets as directories if they don't exist, which breaks Claude Code.
 
-4. **Handoff** — `exec /init` replaces the entrypoint process with s6-overlay, which becomes PID 1.
+4. **Bootstrap trigger** — Checks for sentinel file `.holyclaude-bootstrapped`. If absent, runs `bootstrap.sh`.
+
+5. **Handoff** — `exec /init` replaces the entrypoint process with s6-overlay, which becomes PID 1.
 
 ### Bootstrap (`bootstrap.sh`)
 

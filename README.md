@@ -322,8 +322,9 @@ services:
     ports:
       #
       # CloudCLI web UI — this is the only port you need.
+      # Override the host-side port from `.env` if 3001 is already in use.
       #
-      - "3001:3001"
+      - "${HOLYCLAUDE_HOST_PORT:-3001}:3001"
       #
       # Dev server ports — uncomment as needed.
       # These let you access dev servers running inside the container from your host browser.
@@ -339,13 +340,15 @@ services:
       #
       # ./data/claude — Settings, credentials, API keys, Claude's memory file.
       #                  Survives container rebuilds. NEVER delete this folder.
+      #                  Override the host path from `.env` if you want it elsewhere.
       #
-      - ./data/claude:/home/claude/.claude
+      - ${HOLYCLAUDE_HOST_CLAUDE_DIR:-./data/claude}:/home/claude/.claude
       #
       # ./workspace — Your code and projects. Everything you build goes here.
       #               Accessible from your host machine.
+      #               Override the host path from `.env` if you want a different root.
       #
-      - ./workspace:/workspace
+      - ${HOLYCLAUDE_HOST_WORKSPACE_DIR:-./workspace}:/workspace
     environment:
       #
       # TIMEZONE
@@ -402,6 +405,16 @@ Then:
 ```bash
 docker compose up -d
 ```
+
+If you want to change the host-side port or bind-mount paths without editing compose, copy `.env.example` to `.env` and set:
+
+```dotenv
+HOLYCLAUDE_HOST_PORT=3003
+HOLYCLAUDE_HOST_CLAUDE_DIR=./data/claude
+HOLYCLAUDE_HOST_WORKSPACE_DIR=./workspace
+```
+
+These values are read by Docker Compose on the host. They are not container environment variables.
 
 ### What each section controls:
 

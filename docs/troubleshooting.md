@@ -57,7 +57,10 @@ Note: Polling uses more CPU than inotify. Only enable when needed.
 
 **Symptom:** Can't write files, `git` operations fail, npm install fails.
 
-**Cause:** Container UID/GID doesn't match host file ownership.
+**Cause:** Usually one of these:
+
+- `PUID`/`PGID` doesn't match your host user
+- Docker auto-created `./workspace` as `root:root` on first start because the directory did not exist yet
 
 **Fix:** Set `PUID` and `PGID` to match your host user:
 ```bash
@@ -72,6 +75,8 @@ environment:
   - PUID=1000
   - PGID=1000
 ```
+
+HolyClaude also auto-fixes the top-level `/workspace` ownership on boot if Docker created it as root. If you still have permission errors after startup, the remaining mismatch is in your host files, not the container's workspace mount point.
 
 ---
 

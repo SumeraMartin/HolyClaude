@@ -1,6 +1,7 @@
 # HolyClaude persistent data (created at runtime)
 data/
-workspace/
+workspace/*
+!workspace/.gitkeep
 
 # Environment files with secrets
 .env

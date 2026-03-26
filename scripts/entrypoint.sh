@@ -8,6 +8,7 @@ set -e
 
 CLAUDE_USER="claude"
 CLAUDE_HOME="/home/claude"
+WORKSPACE_DIR="/workspace"
 
 # ---------- UID/GID remapping ----------
 PUID="${PUID:-1000}"
@@ -29,6 +30,19 @@ fi
 # ---------- Fix home directory ownership ----------
 chown "$PUID:$PGID" "$CLAUDE_HOME"
 chown "$PUID:$PGID" "$CLAUDE_HOME/.claude" 2>/dev/null || true
+
+# ---------- Ensure /workspace is writable ----------
+# Docker creates missing bind-mount directories as root on the host.
+# Fix the top-level workspace ownership here so the mapped claude user can write.
+mkdir -p "$WORKSPACE_DIR"
+if ! runuser -u "$CLAUDE_USER" -- test -w "$WORKSPACE_DIR"; then
+    echo "[entrypoint] /workspace is not writable for $CLAUDE_USER — attempting ownership fix"
+    chown "$PUID:$PGID" "$WORKSPACE_DIR" 2>/dev/null || true
+fi
+
+if ! runuser -u "$CLAUDE_USER" -- test -w "$WORKSPACE_DIR"; then
+    echo "[entrypoint] WARNING: /workspace is still not writable; fix host ownership or PUID/PGID"
+fi
 
 # ---------- Pre-create ~/.claude.json as a FILE ----------
 # If this does not exist before Docker mounts, Docker creates it as a DIRECTORY

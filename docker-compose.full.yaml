@@ -18,7 +18,7 @@ services:
     security_opt:
       - seccomp=unconfined
     ports:
-      - "3001:3001"           # CloudCLI web UI
+      - "${HOLYCLAUDE_HOST_PORT:-3001}:3001"   # CloudCLI web UI
       # --- Uncomment ports as needed ---
       # - "3000:3000"         # Dev server (Next.js, Express)
       # - "4321:4321"         # Astro dev
@@ -26,8 +26,8 @@ services:
       # - "8787:8787"         # Wrangler dev
       # - "9229:9229"         # Node.js debugger
     volumes:
-      - ./data/claude:/home/claude/.claude
-      - ./workspace:/workspace
+      - ${HOLYCLAUDE_HOST_CLAUDE_DIR:-./data/claude}:/home/claude/.claude
+      - ${HOLYCLAUDE_HOST_WORKSPACE_DIR:-./workspace}:/workspace
     environment:
       # --- Required ---
       - TZ=UTC                                    # Your timezone (e.g., America/New_York)
