@@ -39,7 +39,7 @@ RUN S6_ARCH=$(case "$TARGETARCH" in arm64) echo "aarch64";; *) echo "x86_64";; e
 # ---------- System packages (always installed) ----------
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # Core utilities
-    git curl wget jq ripgrep fd-find unzip zip tree tmux fzf bat \
+    git curl wget jq ripgrep fd-find unzip zip tree tmux fzf bat bubblewrap \
     # Build tools
     build-essential pkg-config python3 python3-pip python3-venv \
     # Browser (Playwright/Puppeteer)
@@ -61,6 +61,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Sudo
     sudo \
     && rm -rf /var/lib/apt/lists/*
+
+# ---------- bubblewrap setuid (Codex CLI sandbox on restricted kernels) ----------
+RUN chmod u+s /usr/bin/bwrap
 
 # ---------- Full-only system packages ----------
 RUN if [ "$VARIANT" = "full" ]; then \

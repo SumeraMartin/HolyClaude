@@ -188,15 +188,16 @@ HolyClaude runs the **official Claude Code CLI** from Anthropic. Your existing a
 
 | | Why |
 |---|---|
-| ChatGPT Plus/Pro subscription | That's for chat.openai.com only — doesn't provide API access |
 | OpenAI API key for Claude | Different company, different API. OpenAI keys work with the **Codex CLI** (also pre-installed) |
+
+> **ChatGPT Plus/Pro subscribers:** Your subscription works with the **Codex CLI**. Run `codex login --device-auth` inside the container to authenticate with your ChatGPT account.
 
 ### Other AI CLIs included:
 
 | CLI | What you need |
 |-----|--------------|
 | Gemini CLI | Google AI API key (`GEMINI_API_KEY`) |
-| OpenAI Codex | OpenAI API key (`OPENAI_API_KEY`) — separate from ChatGPT subscription |
+| OpenAI Codex | OpenAI API key (`OPENAI_API_KEY`) or ChatGPT Plus/Pro subscription (`codex login --device-auth`) |
 | Cursor | Cursor API key (`CURSOR_API_KEY`) |
 | TaskMaster AI | Uses your AI provider keys (Anthropic, OpenAI, etc.) |
 | Junie | JetBrains account (JetBrains AI subscription) |
@@ -465,7 +466,7 @@ The complete reference. Every variable, what it defaults to, what it does.
 | `CLAUDE_CODE_USE_BEDROCK` | *(unset)* | Set to `1` to use Amazon Bedrock backend |
 | `CLAUDE_CODE_USE_VERTEX` | *(unset)* | Set to `1` to use Google Vertex AI backend |
 | `GEMINI_API_KEY` | *(unset)* | Google Gemini API key |
-| `OPENAI_API_KEY` | *(unset)* | OpenAI API key (for Codex CLI — NOT ChatGPT) |
+| `OPENAI_API_KEY` | *(unset)* | OpenAI API key (for Codex CLI, or use `codex login --device-auth` for ChatGPT subscription) |
 | `CURSOR_API_KEY` | *(unset)* | Cursor API key |
 | `OLLAMA_HOST` | *(unset)* | Ollama endpoint URL (e.g., `http://host.docker.internal:11434`) |
 
@@ -613,7 +614,7 @@ Seven AI CLIs. One container. No other Docker image gives you this.
 |----------|---------|--------------------|--------------------|
 | **Claude Code** | `claude` | CloudCLI web UI (OAuth) | **Yes** — Max/Pro plan or API key |
 | **Gemini CLI** | `gemini` | `GEMINI_API_KEY` env var | API key (pay-per-use) |
-| **OpenAI Codex** | `codex` | `OPENAI_API_KEY` env var | API key only — ChatGPT Plus does NOT work |
+| **OpenAI Codex** | `codex` | `OPENAI_API_KEY` or `codex login --device-auth` | **Yes** — ChatGPT Plus/Pro/Team/Enterprise or API key |
 | **Cursor** | `cursor` | `CURSOR_API_KEY` env var | API key |
 | **TaskMaster AI** | `task-master` | Uses existing AI provider keys | Works with configured keys |
 | **Junie** | `junie` | JetBrains AI subscription | JetBrains account required |

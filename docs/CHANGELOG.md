@@ -4,6 +4,12 @@ All notable changes to HolyClaude will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.1.6] - 03/28/2026
+
+### Fixed
+- Codex CLI `apply_patch` failing on Synology NAS and other hosts with restricted user namespaces (bubblewrap sandbox now works via setuid fallback)
+- Corrected documentation that incorrectly stated ChatGPT Plus/Pro subscriptions do not work with Codex CLI (they do, via `codex login --device-auth`)
+
 ## [1.1.5] - 03/28/2026
 
 ### Added

@@ -73,7 +73,7 @@ The `--break-system-packages` flag is required (no venv in container context).
 |-----|---------|-------|
 | **Claude Code** | `claude` | Primary — you are running inside this |
 | **Gemini CLI** | `gemini` | Requires `GEMINI_API_KEY` env var |
-| **OpenAI Codex** | `codex` | Requires `OPENAI_API_KEY` env var |
+| **OpenAI Codex** | `codex` | `OPENAI_API_KEY` or ChatGPT subscription (`codex login --device-auth`) |
 | **Cursor** | `cursor` | Requires `CURSOR_API_KEY` env var |
 | **TaskMaster AI** | `task-master` | Task planning and management |
 | **Junie** | `junie` | JetBrains AI coding agent (requires JetBrains account) |
