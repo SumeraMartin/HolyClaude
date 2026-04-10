@@ -2,7 +2,7 @@
 
 **One command. Full AI development workstation.**
 
-Claude Code, CloudCLI web UI, headless browser, 7 AI CLIs, 50+ dev tools — containerized and ready. You were going to spend 2 hours setting this up manually. Or you could just `docker compose up`.
+Claude Code, CloudCLI web UI, headless browser, 7 AI CLIs, 50+ dev tools — containerized and ready. Three variants: **slim**, **full**, and **android** (slim base + JDK 17 + Android SDK + emulator + scrcpy). You were going to spend 2 hours setting this up manually. Or you could just `docker compose up`.
 
 [![Docker Pulls](https://img.shields.io/docker/pulls/coderluii/holyclaude?style=flat-square&logo=docker)](https://hub.docker.com/r/coderluii/holyclaude)
 [![GitHub Stars](https://img.shields.io/github/stars/coderluii/holyclaude?style=flat-square&logo=github)](https://github.com/CoderLuii/HolyClaude)
@@ -54,12 +54,16 @@ That's it. Open your browser, sign in, start building.
 
 ## Image Variants
 
-| Tag | Description | Size |
-|-----|-------------|------|
+| Tag | Description | Size (compressed, per arch) |
+|-----|-------------|-----------------------------|
 | `latest` | Full image — everything pre-installed, zero wait | ~3 GB |
 | `slim` | Core tools only — smaller download, extras install on demand | ~1.5 GB |
+| `android` | Slim base + JDK 17 + Android SDK + emulator + scrcpy + pre-baked AVD | ~5 GB |
 | `X.Y.Z` | Full image, pinned version | ~3 GB |
 | `X.Y.Z-slim` | Slim image, pinned version | ~1.5 GB |
+| `X.Y.Z-android` | Android image, pinned version | ~5 GB |
+
+The `android` variant requires `--device /dev/kvm` (Linux hosts only) for hardware-accelerated emulation. macOS hosts fall back to software mode and are officially **experimental**. The Android SDK, build-tools, and system images are redistributed under the [Android SDK terms](https://developer.android.com/studio/terms).
 
 ## Authentication
 

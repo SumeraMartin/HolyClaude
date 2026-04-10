@@ -1,0 +1,86 @@
+#!/bin/bash
+# holyclaude-android-up — idempotent emulator boot for the phone34 AVD.
+#
+# Usage: holyclaude-android-up [--avd phone34] [--timeout 300]
+#
+# Emits structured errors of the form
+#   ERROR kind=<key> message=<...> remediation=<...>
+# so the agent can pattern-match without parsing prose. Always exits 0
+# when the requested AVD is already running.
+set -e
+
+AVD="phone34"
+TIMEOUT="300"
+LOG="/tmp/holyclaude-emulator.log"
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --avd) AVD="$2"; shift 2 ;;
+        --timeout) TIMEOUT="$2"; shift 2 ;;
+        -h|--help)
+            sed -n '2,12p' "$0" | sed 's/^# \?//'
+            exit 0
+            ;;
+        *)
+            echo "ERROR kind=usage message='unknown flag $1' remediation='see --help'" >&2
+            exit 64
+            ;;
+    esac
+done
+
+# Preflight: this only makes sense in the android variant.
+if [ ! -f /etc/holyclaude-variant ] || [ "$(cat /etc/holyclaude-variant)" != "android" ]; then
+    echo "ERROR kind=wrong_variant message='this image is not the android variant' remediation='use coderluii/holyclaude:android'" >&2
+    exit 1
+fi
+
+# Preflight: AVD exists.
+if ! avdmanager list avd 2>/dev/null | grep -q "Name: $AVD"; then
+    echo "ERROR kind=avd_missing message='AVD $AVD not found' remediation='avdmanager create avd -n $AVD -k system-images;android-34;google_apis;\$IMG_ARCH --device pixel_5'" >&2
+    exit 1
+fi
+
+# Idempotent: if an emulator process for this AVD is already running, no-op.
+if pgrep -f "emulator.*$AVD" >/dev/null 2>&1; then
+    echo "[holyclaude-android-up] $AVD already running"
+    exit 0
+fi
+
+# Determine accel and log a banner.
+KVM=0
+[ -f /run/holyclaude/kvm ] && KVM=$(cat /run/holyclaude/kvm)
+if [ "$KVM" = "1" ]; then
+    echo "[holyclaude-android-up] booting $AVD with KVM acceleration..."
+else
+    echo "[holyclaude-android-up] booting $AVD in software mode (no /dev/kvm) — expect slow boot, possibly 5-10 min"
+fi
+
+# Launch detached. We use -accel auto so the emulator falls back to TCG
+# gracefully when /dev/kvm is absent. -no-snapshot-{load,save} keeps boot
+# deterministic for the agent's first run.
+nohup emulator @"$AVD" \
+    -no-window \
+    -no-audio \
+    -no-boot-anim \
+    -no-snapshot-load \
+    -no-snapshot-save \
+    -accel auto \
+    -gpu swiftshader_indirect \
+    -memory 1536 \
+    >"$LOG" 2>&1 &
+EMU_PID=$!
+echo "[holyclaude-android-up] emulator pid=$EMU_PID  log=$LOG"
+
+# Wait for full boot. wait-for-device alone is racy because it returns
+# the moment adbd's socket opens — typically 5-15 s before the framework
+# finishes booting. The polling form with `tr -d '\r'` is mandatory.
+if ! timeout "$TIMEOUT" adb wait-for-device shell \
+    'while [ "$(getprop sys.boot_completed | tr -d "\r")" != "1" ]; do sleep 1; done' 2>/dev/null; then
+    echo "ERROR kind=boot_timeout message='emulator did not finish booting in ${TIMEOUT}s' remediation='check $LOG, then re-run with --timeout 600'" >&2
+    exit 1
+fi
+
+# Unlock the lock screen.
+adb shell input keyevent 82 >/dev/null 2>&1 || true
+
+echo "[holyclaude-android-up] $AVD ready"

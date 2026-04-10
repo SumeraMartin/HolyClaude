@@ -1,0 +1,47 @@
+#!/bin/bash
+# holyclaude-info — environment dump for the agent. Single source of truth
+# for "what is this container and what is installed". Prints JSON so the
+# agent can parse without scraping prose.
+set -e
+
+variant="unknown"
+[ -f /etc/holyclaude-variant ] && variant=$(cat /etc/holyclaude-variant)
+
+img_arch="unknown"
+[ -f /etc/holyclaude-img-arch ] && img_arch=$(cat /etc/holyclaude-img-arch)
+
+kvm="0"
+[ -f /run/holyclaude/kvm ] && kvm=$(cat /run/holyclaude/kvm)
+
+emulator_running="false"
+if pgrep -f "qemu-system" >/dev/null 2>&1 || pgrep -f "emulator.*phone" >/dev/null 2>&1; then
+    emulator_running="true"
+fi
+
+ver_java=$(java -version 2>&1 | head -1 | sed 's/"/\\"/g')
+ver_adb=$(adb --version 2>/dev/null | head -1 || echo "not installed")
+ver_emulator=$(emulator -version 2>/dev/null | head -1 || echo "not installed")
+ver_sdkmanager=$(sdkmanager --version 2>/dev/null | head -1 || echo "not installed")
+ver_gradle=$(gradle --version 2>/dev/null | grep -E '^Gradle ' | head -1 || echo "not installed (use ./gradlew in project)")
+
+avds=""
+if command -v avdmanager >/dev/null 2>&1; then
+    avds=$(avdmanager list avd 2>/dev/null | grep -oE 'Name: [^ ]+' | sed 's/Name: //' | tr '\n' ',' | sed 's/,$//')
+fi
+
+cat <<JSON
+{
+  "variant": "$variant",
+  "image_arch": "$img_arch",
+  "kvm": $kvm,
+  "emulator_running": $emulator_running,
+  "versions": {
+    "java": "$ver_java",
+    "adb": "$ver_adb",
+    "emulator": "$ver_emulator",
+    "sdkmanager": "$ver_sdkmanager",
+    "gradle": "$ver_gradle"
+  },
+  "avds": "$avds"
+}
+JSON
