@@ -3,8 +3,9 @@
 # https://github.com/coderluii/holyclaude
 #
 # Build variants:
-#   docker build -t holyclaude .                        # full (default)
-#   docker build --build-arg VARIANT=slim -t holyclaude:slim .
+#   docker build -t holyclaude .                          # full (default)
+#   docker build --build-arg VARIANT=slim    -t holyclaude:slim .
+#   docker build --build-arg VARIANT=android -t holyclaude:android .
 # ==============================================================================
 
 FROM node:22-bookworm-slim
@@ -15,6 +16,13 @@ LABEL org.opencontainers.image.source=https://github.com/CoderLuii/HolyClaude
 ARG S6_OVERLAY_VERSION=3.2.0.2
 ARG TARGETARCH
 ARG VARIANT=full
+# Android cmdline-tools pin (only consumed when VARIANT=android).
+# Bump by editing both lines below in lockstep. Source:
+# https://developer.android.com/studio
+# Google labels the published checksum "SHA-256" but the value is 40 chars
+# long — it is actually SHA-1. We verify with `sha1sum -c` after download.
+ARG ANDROID_CMDLINE_VERSION=14742923
+ARG ANDROID_CMDLINE_SHA1=48833c34b761c10cb20bcd16582129395d121b27
 
 # ---------- Environment ----------
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -25,6 +33,16 @@ ENV DEBIAN_FRONTEND=noninteractive \
     CHROMIUM_FLAGS="--no-sandbox --disable-gpu --disable-dev-shm-usage" \
     CHROME_PATH=/usr/bin/chromium \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+
+# Android toolchain env (set unconditionally — directories simply do not
+# exist on slim/full, which is harmless. Setting these via /etc/profile.d
+# would not work because docker exec, the s6 services, and the CloudCLI PTY
+# all spawn non-login non-interactive shells.)
+ENV ANDROID_HOME=/opt/android-sdk \
+    ANDROID_SDK_ROOT=/opt/android-sdk \
+    JAVA_HOME=/usr/lib/jvm/default-java \
+    GRADLE_USER_HOME=/workspace/.gradle \
+    PATH="${PATH}:/opt/android-sdk/cmdline-tools/latest/bin:/opt/android-sdk/platform-tools:/opt/android-sdk/emulator"
 
 # ---------- s6-overlay v3 (multi-arch) ----------
 RUN apt-get update && apt-get install -y --no-install-recommends xz-utils curl ca-certificates && rm -rf /var/lib/apt/lists/*
@@ -235,19 +253,101 @@ RUN mkdir -p /home/claude/.claude-code-ui/plugins && \
     echo '{"project-stats":{"name":"project-stats","source":"https://github.com/cloudcli-ai/cloudcli-plugin-starter","enabled":true},"web-terminal":{"name":"web-terminal","source":"https://github.com/cloudcli-ai/cloudcli-plugin-terminal","enabled":true}}' > /home/claude/.claude-code-ui/plugins.json
 USER root
 
-# ---------- Store variant for bootstrap ----------
-RUN echo "${VARIANT}" > /etc/holyclaude-variant
+# ---------- Android toolchain (android variant only) ----------
+# Inserts JDK 17 + Android SDK + platform-tools + build-tools + emulator +
+# arch-correct system image + a pre-baked AVD. The block is
+# deliberately collapsed into one RUN so sdkmanager temp files and apt
+# caches do not bloat intermediate layers (saves ~300-500 MB compressed).
+#
+# IMG_ARCH is derived inline from TARGETARCH the same way S6_ARCH is at
+# the top of the file (arm64 → arm64-v8a, anything else → x86_64).
+#
+# The AVD is created at /opt/android-sdk-avd-seed/phone34.avd as the claude
+# user. The seed location is outside any bind mount so it survives a
+# `compose down`. On first boot, bootstrap.sh copies the seed into
+# ~/.claude/.android/avd/ which is bind-mounted, so AVD state then
+# persists across container recreation.
+#
+# License hashes pre-seeded so the install never blocks on an interactive
+# prompt. The trailing `yes | sdkmanager --licenses` is a belt-and-braces
+# safety net that swallows SIGPIPE under set -e via the explicit `|| true`.
+RUN if [ "$VARIANT" = "android" ]; then \
+      IMG_ARCH=$(case "$TARGETARCH" in arm64) echo "arm64-v8a";; *) echo "x86_64";; esac) && \
+      apt-get update && apt-get install -y --no-install-recommends \
+        openjdk-17-jdk-headless \
+        libgl1 libx11-6 libxkbcommon0 libnss3 libasound2 \
+      && rm -rf /var/lib/apt/lists/* && \
+      ln -sfn "$(dirname "$(dirname "$(readlink -f "$(which java)")")")" /usr/lib/jvm/default-java && \
+      mkdir -p /opt/android-sdk/cmdline-tools && \
+      curl -fsSL -o /tmp/cli.zip \
+        "https://dl.google.com/android/repository/commandlinetools-linux-${ANDROID_CMDLINE_VERSION}_latest.zip" && \
+      echo "${ANDROID_CMDLINE_SHA1}  /tmp/cli.zip" | sha1sum -c - && \
+      unzip -q /tmp/cli.zip -d /opt/android-sdk/cmdline-tools && \
+      mv /opt/android-sdk/cmdline-tools/cmdline-tools /opt/android-sdk/cmdline-tools/latest && \
+      rm /tmp/cli.zip && \
+      mkdir -p /opt/android-sdk/licenses && \
+      printf '\n8933bad161af4178b1185d1a37fbf41ea5269c55\nd56f5187479451eabf01fb78af6dfcb131a6481e\n24333f8a63b6825ea9c5514f83c2829b004d1fee\n' > /opt/android-sdk/licenses/android-sdk-license && \
+      printf '\n84831b9409646a918e30573bab4c9c91346d8abd\n504667f4c0de7af1a06de9f4b1727b84351f2910\n' > /opt/android-sdk/licenses/android-sdk-preview-license && \
+      printf '\nd975f751698a77b662f1254ddbeed3901e976f5a\n' > /opt/android-sdk/licenses/intel-android-extra-license && \
+      printf '\n859f317696f67ef3d7f30a50a5560e7834b43903\n' > /opt/android-sdk/licenses/android-sdk-arm-dbt-license && \
+      ( yes 2>/dev/null | /opt/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=/opt/android-sdk --licenses >/dev/null 2>&1 || true ) && \
+      /opt/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=/opt/android-sdk \
+        "platform-tools" \
+        "platforms;android-34" \
+        "build-tools;34.0.0" \
+        "emulator" \
+        "system-images;android-34;google_apis;${IMG_ARCH}" && \
+      /opt/android-sdk/cmdline-tools/latest/bin/sdkmanager --sdk_root=/opt/android-sdk --list_installed | grep -q "system-images;android-34;google_apis;${IMG_ARCH}" && \
+      rm -rf \
+        /opt/android-sdk/build-tools/34.0.0/renderscript \
+        /opt/android-sdk/emulator/lib64/qt/translations \
+        /opt/android-sdk/platforms/android-34/skins \
+        /opt/android-sdk/.downloadIntermediates \
+        /root/.android/cache && \
+      mkdir -p /opt/android-sdk-avd-seed && \
+      chown -R claude:claude /opt/android-sdk /opt/android-sdk-avd-seed && \
+      echo no | runuser -u claude -- env ANDROID_AVD_HOME=/opt/android-sdk-avd-seed HOME=/home/claude \
+        /opt/android-sdk/cmdline-tools/latest/bin/avdmanager create avd \
+          --force \
+          -n phone34 \
+          -k "system-images;android-34;google_apis;${IMG_ARCH}" \
+          --tag google_apis \
+          --abi "${IMG_ARCH}" \
+          --device "pixel_5" && \
+      printf 'hw.ramSize=1536\ndisk.dataPartition.size=4096M\n' >> /opt/android-sdk-avd-seed/phone34.avd/config.ini && \
+      runuser -u claude -- env ANDROID_AVD_HOME=/opt/android-sdk-avd-seed HOME=/home/claude \
+        /opt/android-sdk/cmdline-tools/latest/bin/avdmanager list avd | grep -q phone34 && \
+      echo "[android] toolchain OK: jdk17 + sdk + build-tools 34.0.0 + system-images;android-34;google_apis;${IMG_ARCH} + AVD phone34" ; \
+    fi
+
+# ---------- Store variant + image arch for bootstrap and entrypoint ----------
+# /etc/holyclaude-img-arch is read by entrypoint.sh on the android variant
+# to detect cross-arch traps (e.g. --platform linux/amd64 forced on Apple
+# Silicon, which produces an x86_64 image running under Rosetta+TCG and
+# is guaranteed to hang on first emulator boot).
+RUN echo "${VARIANT}" > /etc/holyclaude-variant && \
+    IMG_ARCH=$(case "${TARGETARCH}" in arm64) echo "arm64-v8a";; *) echo "x86_64";; esac) && \
+    echo "${IMG_ARCH}" > /etc/holyclaude-img-arch
 
 # ---------- Copy config files ----------
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY scripts/bootstrap.sh /usr/local/bin/bootstrap.sh
 COPY scripts/notify.py /usr/local/bin/notify.py
+COPY scripts/android/holyclaude-info /usr/local/bin/holyclaude-info
+COPY scripts/android/holyclaude-android-up /usr/local/bin/holyclaude-android-up
+COPY scripts/android/holyclaude-android-down /usr/local/bin/holyclaude-android-down
+COPY scripts/android/holyclaude-android-run /usr/local/bin/holyclaude-android-run
 COPY config/settings.json /usr/local/share/holyclaude/settings.json
 COPY config/claude-memory-full.md /usr/local/share/holyclaude/claude-memory-full.md
 COPY config/claude-memory-slim.md /usr/local/share/holyclaude/claude-memory-slim.md
+COPY config/claude-memory-android.md /usr/local/share/holyclaude/claude-memory-android.md
 RUN chmod +x /usr/local/bin/entrypoint.sh \
     /usr/local/bin/bootstrap.sh \
-    /usr/local/bin/notify.py
+    /usr/local/bin/notify.py \
+    /usr/local/bin/holyclaude-info \
+    /usr/local/bin/holyclaude-android-up \
+    /usr/local/bin/holyclaude-android-down \
+    /usr/local/bin/holyclaude-android-run
 
 # ---------- s6-overlay service definitions ----------
 COPY s6-overlay/s6-rc.d/cloudcli/type /etc/s6-overlay/s6-rc.d/cloudcli/type

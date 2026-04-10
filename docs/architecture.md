@@ -156,8 +156,22 @@ The variant is stored at build time in `/etc/holyclaude-variant`. Bootstrap read
 |---------|-------------|-------------|-------------|
 | `full` | All | All | All |
 | `slim` | Core only | Core only | No pandoc/ffmpeg/libvips |
+| `android` | Core only | Core only | Slim base **+** JDK 17 + Android SDK + emulator + scrcpy |
 
 See [What's Inside](../README.md#rocket-whats-inside) for the complete package lists.
+
+### Android variant
+
+Layered on the **slim** base (not full), the android variant adds JDK 17, the Android SDK + cmdline-tools, platform-tools, build-tools 34.0.0, the android-34 google_apis system image (arch-correct via `TARGETARCH`), the Android emulator, scrcpy, and a pre-baked `phone34` AVD. Compressed image size is roughly the slim base plus ~5 GB per arch — comfortably under the 12 GB Docker Hub soft ceiling.
+
+Key design points:
+
+- **Slim, not full, as the base.** Stacking Android on top of full would push the compressed image past 10 GB and punish Docker Hub pull times. Web/backend users on the full image do not pay the Android tax.
+- **No new s6 service for the emulator.** The emulator boot tax (60-120 s, 1.5 GB idle RAM) only matters when the agent is actually doing Android work. The `holyclaude-android-up` wrapper boots it on demand.
+- **`/dev/kvm` passthrough on Linux, software fallback on Mac.** The entrypoint detects `/dev/kvm` at runtime, writes a marker file at `/run/holyclaude/kvm`, and adds the `claude` user to a group matching the host's KVM device GID (which varies by distro). Apple Silicon Mac is **experimental / known-slow** — TCG arm64 boot can take 10+ minutes or hang outright.
+- **Pre-baked AVD seed at `/opt/android-sdk-avd-seed/`.** On first boot, `entrypoint.sh` copies the seed into `~/.claude/.android/avd/` (which is symlinked from `~/.android` matching the Codex/Gemini/Cursor pattern) and rewrites the absolute paths in `phone34.ini`. The user's installed APKs and emulator state then persist across `compose down` via the existing `./data/claude` bind mount.
+- **Headless mp4 recording via scrcpy** (with `adb shell screenrecord` fallback for system images that lack hardware MediaCodec). No noVNC, no X forwarding, no extra ports.
+- **Threat model widens.** `--device /dev/kvm` + the existing `NOPASSWD sudo` + `seccomp=unconfined` materially widens the host-adjacent privilege boundary. Document explicitly: do not expose the android variant to untrusted input.
 
 ---
 

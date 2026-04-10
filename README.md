@@ -218,14 +218,16 @@ HolyClaude runs the **official Claude Code CLI** from Anthropic. Your existing a
 
 ## :package: Image Variants
 
-Two flavors. Same quality. Pick your weight class.
+Three flavors. Same quality. Pick your weight class.
 
 | Tag | What you get | Best for |
 |-----|-------------|----------|
 | **`latest`** | Everything pre-installed — every tool, every library, every CLI | Most users. Zero wait time. Claude never has to stop and install something. |
 | **`slim`** | Core tools only — Claude installs extras on-demand | Smaller VPS, limited disk, metered bandwidth |
+| **`android`** | Slim base **+** JDK 17 + Android SDK + emulator + scrcpy + pre-baked AVD | Building Android APKs, running them in a headless emulator, recording sessions to mp4 |
 | `X.Y.Z` | Full image, pinned version | Production stability — you control when to update |
 | `X.Y.Z-slim` | Slim image, pinned version | Production + small footprint |
+| `X.Y.Z-android` | Android image, pinned version | Reproducible Android CI runs |
 
 ```bash
 # Full — batteries included (recommended)
@@ -233,9 +235,55 @@ docker pull coderluii/holyclaude
 
 # Slim — lean and mean
 docker pull coderluii/holyclaude:slim
+
+# Android — slim + a complete Android toolchain
+docker pull coderluii/holyclaude:android
 ```
 
 > **`latest` is always the full image.** Slim users: don't worry — when you ask Claude to do something that needs a missing tool, it installs it in seconds. You get the same capabilities, just with a smaller initial download.
+
+### Android quick-start
+
+The android variant ships JDK 17, the Android SDK + cmdline-tools, build-tools 34.0.0, the arch-correct `android-34` `google_apis` system image, the Android emulator, scrcpy, and a pre-baked `phone34` AVD (Pixel 5 profile). The agent can build a Gradle project, boot the emulator on demand, install the APK, drive the app, and record an mp4 — all headlessly.
+
+```yaml
+services:
+  holyclaude:
+    image: coderluii/holyclaude:android
+    container_name: holyclaude
+    restart: unless-stopped
+    shm_size: 4g                              # 2g is fine if Chromium is idle
+    cap_add:
+      - SYS_ADMIN
+      - SYS_PTRACE
+    security_opt:
+      - seccomp=unconfined
+    devices:
+      - /dev/kvm:/dev/kvm                     # Linux + KVM only — omit on Mac
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./data/claude:/home/claude/.claude
+      - ./workspace:/workspace
+    environment:
+      - TZ=UTC
+      - PUID=1000                             # set to $(id -u) to match host
+      - PGID=1000                             # set to $(id -g) to match host
+```
+
+```bash
+docker compose up -d
+docker exec -it holyclaude bash
+holyclaude-info                               # JSON dump of versions, KVM status, AVDs
+holyclaude-android-up                         # idempotent emulator boot
+cd /workspace/<your-gradle-project> && ./gradlew --no-daemon assembleDebug
+holyclaude-android-run app/build/outputs/apk/debug/app-debug.apk --seconds 60
+ls /workspace/.holyclaude-recordings/         # run.mp4, logcat.txt, meta.json
+```
+
+> ⚠️ **Apple Silicon Mac is experimental.** Without `/dev/kvm`, the emulator falls back to TCG and can take 10+ minutes to boot or hang outright. For real Android work on Mac, use a Linux host with KVM or connect a real device via `adb connect host.docker.internal:5555`.
+>
+> ⚠️ **Threat model.** The `--device /dev/kvm` + `NOPASSWD sudo` + `seccomp=unconfined` combination materially widens the host-adjacent privilege boundary. Do not expose the android variant to untrusted input.
 
 <p align="right">
   <a href="#top">↑ back to top</a>
@@ -604,6 +652,41 @@ The full image includes everything above, plus:
 </details>
 
 > **Slim users:** Missing a package? Ask Claude. It installs npm/pip packages in seconds. System packages (pandoc, ffmpeg) take 1-2 minutes. You get the same capabilities — the full image just has zero wait time.
+
+### Android image only (additional toolchain)
+
+The android image is layered on the **slim** base (not full) and adds:
+
+<details>
+<summary><strong>Android toolchain</strong></summary>
+
+| Component | What it's for |
+|-----------|---------------|
+| `openjdk-17-jdk-headless` | JDK 17 — meets the AGP 8.x minimum and is the safest default for current Android Gradle plugins |
+| `cmdline-tools` (14742923) | `sdkmanager`, `avdmanager` — pinned, SHA-1 verified at build time |
+| `platform-tools` | `adb`, `fastboot` |
+| `build-tools 34.0.0` | `aapt`, `apksigner`, `d8`, `r8`, `zipalign` (the .5 patch fixes Kotlin 2.0 d8/r8 codegen and an aapt2 path bug) |
+| `platforms;android-34` | API 34 compileSdk target |
+| `system-images;android-34;google_apis;${IMG_ARCH}` | Arch-correct system image — `x86_64` on amd64 hosts, `arm64-v8a` on arm64 hosts |
+| `emulator` | The Android emulator (started on demand by `holyclaude-android-up`, not as an s6 service) |
+| `scrcpy` | Headless mp4 recording (with `adb shell screenrecord` fallback for system images that lack hardware MediaCodec) |
+| Pre-baked `phone34` AVD | Pixel 5 profile, 1.5 GB RAM, 4 GB userdata, seeded into `~/.claude/.android/avd/` on first boot so it persists across `compose down` |
+
+</details>
+
+<details>
+<summary><strong>Android wrapper scripts at <code>/usr/local/bin/</code></strong></summary>
+
+| Wrapper | What it does |
+|---------|-------------|
+| `holyclaude-info` | JSON dump of variant, KVM status, tool versions, AVDs |
+| `holyclaude-android-up` | Idempotent emulator boot, structured `ERROR kind=...` output |
+| `holyclaude-android-down` | Clean shutdown (also called by the `SessionEnd` hook so the emulator does not leak 2-3 GB RAM) |
+| `holyclaude-android-run` | One-shot install + launch + record + logcat → timestamped run dir under `/workspace/.holyclaude-recordings/` |
+
+</details>
+
+> **Not pre-installed on the android variant** (install per project): Maestro, Appium, uiautomator2, Espresso. Locking the image to one test driver hurts more than it helps.
 
 <p align="right">
   <a href="#top">↑ back to top</a>

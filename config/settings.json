@@ -26,6 +26,18 @@
           }
         ]
       }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/local/bin/holyclaude-android-down 2>/dev/null || true",
+            "timeout": 5000
+          }
+        ]
+      }
     ]
   }
 }

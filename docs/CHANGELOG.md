@@ -4,6 +4,22 @@ All notable changes to HolyClaude will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- New `android` image variant — slim base plus JDK 17, Android SDK (cmdline-tools 14742923, build-tools 34.0.0, platform-tools, android-34 platform), the arch-correct google_apis system image (`x86_64` on amd64 / `arm64-v8a` on arm64), the Android emulator, scrcpy, and a pre-baked `phone34` AVD (Pixel 5 profile, 1.5 GB RAM, 4 GB userdata)
+- `holyclaude-info` JSON environment dump and `holyclaude-android-{up,down,run}` wrappers at `/usr/local/bin/` for idempotent emulator boot, clean shutdown, and one-shot APK install + launch + scrcpy recording + logcat capture
+- KVM detection in `entrypoint.sh` writes a marker file at `/run/holyclaude/kvm` (env-var would not survive the s6-overlay v3 environment strip on the CloudCLI PTY)
+- Runtime `/dev/kvm` group GID fixup so the `claude` user can open the device on Arch (78), Ubuntu (108), and Debian (104) hosts
+- Cross-arch warning when `uname -m` disagrees with the image's baked system-image arch (catches `--platform linux/amd64` forced on Apple Silicon)
+- `~/.android` symlink to `~/.claude/.android` (matches the existing Codex/Gemini/Cursor pattern) so the AVD and installed-APK state persist across `compose down` via the existing `./data/claude` bind mount
+- AVD seed at `/opt/android-sdk-avd-seed/phone34.avd/` is copied into the bind-mounted home on first boot, with absolute paths in `phone34.ini` rewritten in place
+- `SessionEnd` hook in `config/settings.json` calls `holyclaude-android-down` so the emulator does not leak 2-3 GB of RAM after every agent session
+- New `claude-memory-android.md` shipped via the existing variant-aware bootstrap (no `bootstrap.sh` change required)
+- Variant-specific Android sections in `docs/architecture.md`, `docs/configuration.md`, `docs/troubleshooting.md`, and `README.md`
+- CI matrix builds the new variant on `linux/amd64` and `linux/arm64`, publishes `:android` and `:X.Y.Z-android` to Docker Hub and GHCR, and includes a single-arch smoke test (`load: true` → `docker run` sanity checks) BEFORE the multi-arch push
+- `v*-android-rc*` tags build only the android variant via a dynamic matrix filter so RC iterations do not republish slim/full
+
 ## [1.2.2] - 04/10/2026
 
 ### Fixed
