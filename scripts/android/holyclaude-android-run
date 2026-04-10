@@ -1,0 +1,138 @@
+#!/bin/bash
+# holyclaude-android-run — one-shot "install APK, run it, capture
+# everything" wrapper for the agent. Boots the emulator if needed,
+# clears logcat, installs the APK, launches the launcher activity,
+# starts video recording, dumps logcat at the end, and writes
+# everything to a timestamped run directory.
+#
+# Usage: holyclaude-android-run <apk> [--seconds 60] [--activity name]
+#                                     [--no-recording]
+#
+# Output: /workspace/.holyclaude-recordings/<ISO8601-utc>/{run.mp4,
+# logcat.txt,logcat-crash.txt,app.apk,meta.json,command.sh}
+set -e
+
+APK=""
+SECONDS_TO_RUN=60
+ACTIVITY=""
+RECORD=1
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --seconds) SECONDS_TO_RUN="$2"; shift 2 ;;
+        --activity) ACTIVITY="$2"; shift 2 ;;
+        --no-recording) RECORD=0; shift ;;
+        -h|--help) sed -n '2,14p' "$0" | sed 's/^# \?//'; exit 0 ;;
+        -*) echo "ERROR kind=usage message='unknown flag $1'" >&2; exit 64 ;;
+        *)
+            if [ -z "$APK" ]; then APK="$1"; shift
+            else echo "ERROR kind=usage message='unexpected positional arg: $1'" >&2; exit 64; fi
+            ;;
+    esac
+done
+
+if [ -z "$APK" ] || [ ! -f "$APK" ]; then
+    echo "ERROR kind=usage message='APK path is required and must exist' remediation='holyclaude-android-run path/to/app-debug.apk'" >&2
+    exit 64
+fi
+
+# Make sure the emulator is up. holyclaude-android-up is idempotent.
+holyclaude-android-up
+
+# Pick a run directory.
+TS=$(date -u +%Y%m%dT%H%M%SZ)
+RUN_DIR="/workspace/.holyclaude-recordings/$TS"
+mkdir -p "$RUN_DIR"
+
+# Auto-prune: keep only the 20 most recent runs.
+ls -1dt /workspace/.holyclaude-recordings/*/ 2>/dev/null | tail -n +21 | xargs -r rm -rf
+
+# Discover package + launcher activity from the manifest if not given.
+PACKAGE=""
+AAPT=""
+if command -v aapt >/dev/null 2>&1; then
+    AAPT=$(command -v aapt)
+elif [ -x "$ANDROID_HOME/build-tools/34.0.5/aapt" ]; then
+    AAPT="$ANDROID_HOME/build-tools/34.0.5/aapt"
+fi
+if [ -n "$AAPT" ]; then
+    PACKAGE=$("$AAPT" dump badging "$APK" 2>/dev/null | grep -oE "package: name='[^']+'" | head -1 | sed "s/package: name='//; s/'//")
+    if [ -z "$ACTIVITY" ]; then
+        ACTIVITY=$("$AAPT" dump badging "$APK" 2>/dev/null | grep -oE "launchable-activity: name='[^']+'" | head -1 | sed "s/launchable-activity: name='//; s/'//")
+    fi
+fi
+
+# Clear logcat buffers so we only capture this run.
+adb logcat -c >/dev/null 2>&1 || true
+adb logcat -b crash -c >/dev/null 2>&1 || true
+
+# Install the APK.
+echo "[holyclaude-android-run] installing $APK"
+INSTALL_START=$(date +%s)
+adb install -r "$APK" >"$RUN_DIR/install.log" 2>&1
+INSTALL_TIME=$(( $(date +%s) - INSTALL_START ))
+
+# Launch the activity if we know it.
+if [ -n "$PACKAGE" ] && [ -n "$ACTIVITY" ]; then
+    echo "[holyclaude-android-run] launching $PACKAGE/$ACTIVITY"
+    adb shell am start -n "$PACKAGE/$ACTIVITY" >>"$RUN_DIR/install.log" 2>&1 || true
+elif [ -n "$PACKAGE" ]; then
+    echo "[holyclaude-android-run] launching $PACKAGE via monkey (no launcher activity discovered)"
+    adb shell monkey -p "$PACKAGE" -c android.intent.category.LAUNCHER 1 >>"$RUN_DIR/install.log" 2>&1 || true
+fi
+
+# Record video. scrcpy → mp4 by default. Some google_apis system images
+# lack hardware MediaCodec, in which case scrcpy fails — fall back to
+# `adb shell screenrecord` which ships with Android (3-min hard cap).
+RECORDING_BACKEND="none"
+if [ "$RECORD" = "1" ]; then
+    if scrcpy --no-playback --no-window \
+              --record="$RUN_DIR/run.mp4" \
+              --time-limit="$SECONDS_TO_RUN" >"$RUN_DIR/scrcpy.log" 2>&1; then
+        RECORDING_BACKEND="scrcpy"
+    else
+        echo "[holyclaude-android-run] scrcpy failed; falling back to adb screenrecord (180s cap)"
+        CAP=$SECONDS_TO_RUN
+        if [ "$CAP" -gt 180 ]; then CAP=180; fi
+        adb shell screenrecord --time-limit "$CAP" /sdcard/run.mp4 >>"$RUN_DIR/scrcpy.log" 2>&1 || true
+        adb pull /sdcard/run.mp4 "$RUN_DIR/run.mp4" >/dev/null 2>&1 || true
+        adb shell rm -f /sdcard/run.mp4 >/dev/null 2>&1 || true
+        RECORDING_BACKEND="screenrecord"
+    fi
+fi
+
+# Dump logcat: default buffer + crash buffer separately.
+adb logcat -d >"$RUN_DIR/logcat.txt" 2>/dev/null || true
+adb logcat -d -b crash >"$RUN_DIR/logcat-crash.txt" 2>/dev/null || true
+
+# Hardlink the apk into the run dir for traceability (cheap, no copy).
+ln "$APK" "$RUN_DIR/app.apk" 2>/dev/null || cp "$APK" "$RUN_DIR/app.apk"
+
+# Write meta.json.
+KVM=0
+[ -f /run/holyclaude/kvm ] && KVM=$(cat /run/holyclaude/kvm)
+cat >"$RUN_DIR/meta.json" <<JSON
+{
+  "apk": "$APK",
+  "package": "$PACKAGE",
+  "activity": "$ACTIVITY",
+  "install_seconds": $INSTALL_TIME,
+  "record_seconds": $SECONDS_TO_RUN,
+  "recording_backend": "$RECORDING_BACKEND",
+  "kvm": $KVM,
+  "timestamp_utc": "$TS"
+}
+JSON
+
+# Write the exact commands we ran for reproducibility.
+cat >"$RUN_DIR/command.sh" <<SH
+#!/bin/bash
+holyclaude-android-up
+adb logcat -c
+adb install -r "$APK"
+adb shell am start -n "$PACKAGE/$ACTIVITY"
+scrcpy --no-playback --no-window --record=run.mp4 --time-limit=$SECONDS_TO_RUN
+adb logcat -d > logcat.txt
+SH
+
+echo "[holyclaude-android-run] done — artifacts in $RUN_DIR"

@@ -154,6 +154,55 @@ Chromium uses `/dev/shm` for shared memory. Docker defaults to 64MB, which cause
 
 ---
 
+## Android Variant Extras
+
+The `:android` tag layers the Android toolchain on top of the slim base. A few extra knobs only apply to that variant.
+
+### KVM passthrough (Linux hosts)
+
+```yaml
+devices:
+  - /dev/kvm:/dev/kvm
+```
+
+Required for hardware-accelerated emulator boots on Linux hosts. Without it the emulator falls back to TCG (software emulation), which is roughly 5-10× slower. The entrypoint adds the `claude` user to a runtime group matching the host's `/dev/kvm` GID (Arch=78, Ubuntu=108, Debian=104) so a baked-in GID is not required.
+
+**Mac users:** leave the `devices:` line out. macOS does not expose `/dev/kvm` and Docker Desktop cannot pass HVF through. The entrypoint detects the missing device and writes `0` to `/run/holyclaude/kvm`. **On Apple Silicon, the arm64 system image runs under TCG and frequently hangs or takes 10+ minutes to boot — the android variant is officially experimental on Mac.** Use a real device via `adb connect host.docker.internal:5555` instead.
+
+### Shared memory
+
+```yaml
+shm_size: 4g
+```
+
+Recommended when running the emulator alongside Chromium. `2g` is fine if Chromium is idle. **Minimum host RAM: 8 GB** — `shm_size` is tmpfs and counts against RSS, so a 4 GB allocation on a 1 GB DigitalOcean droplet triggers OOM-kills with no Docker error.
+
+### Host UID/GID matching (mandatory)
+
+```yaml
+environment:
+  - PUID=1000   # set to $(id -u) on your host
+  - PGID=1000   # set to $(id -g) on your host
+```
+
+Gradle writes into `/workspace/<project>/.gradle/` and `$GRADLE_USER_HOME` (which the variant pins to `/workspace/.gradle`). On macOS host UID is 501 and on most Linux hosts it is 1000 — mismatched ownership causes "permission denied" failures that look like Android-tooling bugs but are bind-mount permission bugs.
+
+### KVM detection from inside the container
+
+The agent checks acceleration status via a marker file at `/run/holyclaude/kvm`:
+
+```bash
+cat /run/holyclaude/kvm    # 1 = hardware acceleration, 0 = software mode
+```
+
+This is a marker file rather than an environment variable because s6-overlay v3 services run with a minimal env, and the CloudCLI PTY (which hosts the agent shell) is one of those services. The marker file lives in tmpfs and survives the env strip.
+
+### Threat model — read this before exposing the variant
+
+The android variant runs with `--device /dev/kvm` plus the existing `NOPASSWD sudo`, `seccomp=unconfined`, and `cap_add: [SYS_ADMIN, SYS_PTRACE]`. That combination materially widens the host-adjacent privilege boundary (KVM ioctl access through unfiltered seccomp). **Do not expose the android variant to untrusted input.** Treat it as a developer workstation only — not a multi-tenant or public-facing surface.
+
+---
+
 ## Claude Code Settings
 
 The default `settings.json` at `~/.claude/settings.json`:
