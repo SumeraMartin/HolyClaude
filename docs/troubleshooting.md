@@ -141,6 +141,111 @@ docker compose restart holyclaude
 
 ---
 
+## Android Variant
+
+### Emulator hangs at boot on Apple Silicon Mac
+
+**Symptom:** `holyclaude-android-up` (or `emulator @phone34 -no-window &`) sits at "boot" forever, or takes 10+ minutes, on an Apple Silicon Mac.
+
+**Cause:** macOS does not expose `/dev/kvm` and Docker Desktop on M-series cannot pass HVF through. The arm64 system image runs under QEMU TCG (software emulation), which is roughly 5-10× slower than KVM. On a slow path it may never reach `sys.boot_completed=1`.
+
+**Fix:** The android variant is officially **experimental** on Mac. Use a Linux host with `--device /dev/kvm` for any serious Android work. For ad-hoc Mac use, connect to a real device with USB debugging enabled:
+
+```bash
+# On the host (macOS):
+adb -a -P 5037 nodaemon server start
+
+# Inside the container:
+adb connect host.docker.internal:5555
+```
+
+---
+
+### `Permission denied` opening `/dev/kvm`
+
+**Symptom:** Emulator dies on startup with `KVM is required to run this AVD: Permission denied`.
+
+**Cause:** `--device /dev/kvm` passes the device through but the host's `kvm` group GID varies by distro (Arch=78, Ubuntu=108, Debian=104) and the `claude` user inside the container is not a member of the matching group.
+
+**Fix:** Already handled in `entrypoint.sh` — on every boot it reads the host's `/dev/kvm` GID, creates a matching group, and adds `claude` to it. If you still hit this:
+
+```bash
+# Inside the container:
+ls -l /dev/kvm           # note the group number
+id claude                # claude should be in that group
+```
+
+If claude is not in the group, restart the container — the entrypoint runs every boot. If the GID does not appear at all, your host did not pass the device through (`--device /dev/kvm` missing from the compose file).
+
+---
+
+### Gradle: `Permission denied` on `.gradle/`
+
+**Symptom:** `./gradlew assembleDebug` fails with permission errors when writing to `.gradle/` or `~/.gradle/`.
+
+**Cause:** Bind-mount UID mismatch. Gradle writes to `/workspace/.gradle` (the variant pins `GRADLE_USER_HOME` there) and the per-project `.gradle/`, both inside the bind-mounted `/workspace`. If `PUID`/`PGID` does not match your host user, the writes land as the wrong owner.
+
+**Fix:** Set `PUID=$(id -u)` and `PGID=$(id -g)` in your compose file:
+
+```yaml
+environment:
+  - PUID=1000   # your host UID
+  - PGID=1000   # your host GID
+```
+
+---
+
+### `scrcpy: server did not start` on a google_apis emulator
+
+**Symptom:** `holyclaude-android-run` reports that scrcpy failed and falls back to `adb shell screenrecord`.
+
+**Cause:** Some `google_apis` system images do not expose hardware MediaCodec, which scrcpy needs for its H.264 encoder. This is a known limitation of non-Play-Store images.
+
+**Fix:** No fix needed — `holyclaude-android-run` automatically falls back to `adb shell screenrecord` (3-minute hard cap, ships with Android, no extra dependencies). If you are calling raw scrcpy, switch to:
+
+```bash
+adb shell screenrecord --time-limit 180 /sdcard/run.mp4 && adb pull /sdcard/run.mp4
+```
+
+---
+
+### Container OOM-killed when starting the emulator
+
+**Symptom:** Container exits with no clear error, or `dmesg` on the host shows OOM-killer messages.
+
+**Cause:** The android variant assumes 8 GB host RAM minimum. `shm_size: 4g` is tmpfs, which counts against container RSS, and the emulator itself uses 1.5-2 GB. On a small VPS this exceeds the cgroup memory limit.
+
+**Fix:** Drop `shm_size` to `2g`, do not run Chromium concurrently with the emulator, and consider a host with at least 8 GB RAM.
+
+---
+
+### `phone34` AVD reset on every restart
+
+**Symptom:** Installed APKs disappear when the container is recreated.
+
+**Cause:** The `~/.android` symlink → `~/.claude/.android` bind mount path is missing or broken. The AVD seed at `/opt/android-sdk-avd-seed/phone34.avd` should be copied into the bind-mounted home on first boot.
+
+**Fix:** Verify the symlink exists:
+
+```bash
+ls -l ~/.android                       # should be a symlink → /home/claude/.claude/.android
+ls ~/.claude/.android/avd/phone34.avd  # should exist after first boot
+```
+
+If the symlink is missing, ensure your compose file binds `./data/claude` to `/home/claude/.claude` and restart the container. The entrypoint creates the symlink on every boot.
+
+---
+
+### Cross-arch trap (`--platform linux/amd64` on Apple Silicon)
+
+**Symptom:** The image runs but the emulator hangs forever, or the entrypoint logs `WARNING: image is built for x86_64 but host CPU is arm64`.
+
+**Cause:** Forcing `--platform linux/amd64` on Apple Silicon pulls an x86_64 image that runs under Rosetta. The Android emulator then runs under TCG-on-Rosetta, which is unworkably slow.
+
+**Fix:** Drop the `--platform` override and let Docker pick the native arch — the multi-arch manifest publishes both `linux/amd64` and `linux/arm64`. The arm64 image uses an `arm64-v8a` system image so it runs natively on Apple Silicon (still TCG without KVM, but at least native arch).
+
+---
+
 ## SMB/CIFS Gotchas
 
 If your volumes are on a Samba/CIFS network share (common with Hyper-V VMs, NAS devices):
