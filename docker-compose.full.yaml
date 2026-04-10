@@ -17,6 +17,17 @@ services:
       - SYS_PTRACE
     security_opt:
       - seccomp=unconfined
+    # --- Android variant only: KVM passthrough for hardware-accelerated emulator ---
+    # Linux hosts with /dev/kvm only. Mac users: leave commented — the
+    # entrypoint detects the missing device and falls back to software mode.
+    # IMPORTANT: combined with NOPASSWD sudo + seccomp=unconfined, KVM
+    # passthrough widens the host-adjacent privilege boundary. Do NOT
+    # expose this configuration to untrusted agent input.
+    # devices:
+    #   - /dev/kvm:/dev/kvm
+    # --- Android variant: bump shm_size to 4g if running emulator + Chromium concurrently ---
+    # 2g is fine if Chromium is idle. Min host RAM: 8 GB.
+    # shm_size: 4g
     # extra_hosts:
     #   - "host.docker.internal:host-gateway"  # Linux: let the container reach services on the Docker host (e.g., Ollama)
     ports:

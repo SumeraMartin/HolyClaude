@@ -1,0 +1,22 @@
+#!/bin/bash
+# holyclaude-android-down — clean kill of any running emulator. Safe to
+# call when nothing is running. The SessionEnd hook calls this so the
+# emulator does not leak 2-3 GB of RAM after every agent session.
+set -e
+
+if ! pgrep -x qemu-system-x86_64 >/dev/null 2>&1 && \
+   ! pgrep -x qemu-system-aarch64 >/dev/null 2>&1 && \
+   ! pgrep -f "emulator.*phone" >/dev/null 2>&1; then
+    exit 0
+fi
+
+# Try the graceful shutdown via adb first.
+adb emu kill >/dev/null 2>&1 || true
+sleep 1
+
+# Fallback: pkill anything emulator-shaped that is still alive.
+pkill -f "emulator.*phone" 2>/dev/null || true
+pkill -x qemu-system-x86_64 2>/dev/null || true
+pkill -x qemu-system-aarch64 2>/dev/null || true
+
+echo "[holyclaude-android-down] emulator stopped"
