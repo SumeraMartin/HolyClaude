@@ -141,7 +141,11 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          # android variant is amd64-only: Google ships no official ARM64
+          # Linux SDK tools (no emulator, adb, aapt2 — see issuetracker
+          # #227219818), and KVM acceleration of an x86_64 emulator
+          # requires an x86_64 container anyway. slim/full stay multi-arch.
+          platforms: ${{ matrix.variant == 'android' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
