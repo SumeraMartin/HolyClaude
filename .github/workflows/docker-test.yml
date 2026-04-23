@@ -113,7 +113,8 @@ jobs:
 
       - name: Common tool checks
         run: |
-          docker run --rm -e HOME=/home/claude "$IMAGE" bash -c '
+          docker run --rm "$IMAGE" bash -c '
+            export HOME=/home/claude
             set -euo pipefail
             echo "=== Claude Code ===" && claude --version
             echo "=== Codex ===" && codex --version
@@ -135,7 +136,8 @@ jobs:
       - name: Full-only tool checks
         if: matrix.variant == 'full'
         run: |
-          docker run --rm -e HOME=/home/claude "$IMAGE" bash -c '
+          docker run --rm "$IMAGE" bash -c '
+            export HOME=/home/claude
             set -euo pipefail
             echo "=== Azure CLI ===" && az --version
             echo "=== pandoc ===" && pandoc --version | head -1
@@ -148,7 +150,8 @@ jobs:
       - name: Android-only tool checks
         if: matrix.variant == 'android'
         run: |
-          docker run --rm -e HOME=/home/claude "$IMAGE" bash -c '
+          docker run --rm "$IMAGE" bash -c '
+            export HOME=/home/claude
             set -euo pipefail
             echo "=== Java ===" && java -version 2>&1
             echo "=== ADB ===" && adb --version
@@ -171,7 +174,8 @@ jobs:
 
       - name: File system and config checks
         run: |
-          docker run --rm -e HOME=/home/claude --env EXPECTED_VARIANT=${{ matrix.variant }} "$IMAGE" bash -c '
+          docker run --rm --env EXPECTED_VARIANT=${{ matrix.variant }} "$IMAGE" bash -c '
+            export HOME=/home/claude
             set -euo pipefail
             VARIANT=$(cat /etc/holyclaude-variant)
             echo "Variant: $VARIANT (expected: $EXPECTED_VARIANT)"
