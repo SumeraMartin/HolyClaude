@@ -1,0 +1,279 @@
+name: HolyClaude — Smoke Tests
+
+run-name: "Smoke test ${{ inputs.variant || 'all' }} (${{ inputs.tag || 'latest' }})"
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Image tag to test (e.g. latest, slim, android, 1.2.3)'
+        required: false
+        default: 'latest'
+        type: string
+      variant:
+        description: 'Which variant(s) to test'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - full
+          - slim
+          - android
+
+  workflow_run:
+    workflows: ["HolyClaude — Build & Push to Docker Hub + GHCR"]
+    types: [completed]
+
+env:
+  GHCR_IMAGE: ghcr.io/sumeramartin/holyclaude
+
+jobs:
+  # ------------------------------------------------------------------
+  # Job 1: Compute the test matrix (which variants, which tags to pull)
+  # ------------------------------------------------------------------
+  prepare:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    outputs:
+      matrix: ${{ steps.resolve.outputs.matrix }}
+    steps:
+      - name: Resolve test matrix
+        id: resolve
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            # Auto-trigger: derive variants from the tag that triggered the build
+            BRANCH="${{ github.event.workflow_run.head_branch }}"
+            if [[ "$BRANCH" == *-android-rc* ]]; then
+              MATRIX='[{"variant":"android","tag":"android"}]'
+            else
+              MATRIX='[{"variant":"slim","tag":"slim"},{"variant":"full","tag":"latest"},{"variant":"android","tag":"android"}]'
+            fi
+          else
+            # Manual trigger: derive from inputs
+            TAG="${{ inputs.tag }}"
+            VARIANT="${{ inputs.variant }}"
+
+            # Determine per-variant tags
+            # "latest" → full=latest, slim=slim, android=android
+            # semver like "1.2.3" → full=1.2.3, slim=1.2.3-slim, android=1.2.3-android
+            if [ "$TAG" = "latest" ] || [ "$TAG" = "slim" ] || [ "$TAG" = "android" ]; then
+              FULL_TAG="latest"
+              SLIM_TAG="slim"
+              ANDROID_TAG="android"
+            else
+              FULL_TAG="$TAG"
+              SLIM_TAG="${TAG}-slim"
+              ANDROID_TAG="${TAG}-android"
+            fi
+
+            case "$VARIANT" in
+              full)    MATRIX="[{\"variant\":\"full\",\"tag\":\"${FULL_TAG}\"}]" ;;
+              slim)    MATRIX="[{\"variant\":\"slim\",\"tag\":\"${SLIM_TAG}\"}]" ;;
+              android) MATRIX="[{\"variant\":\"android\",\"tag\":\"${ANDROID_TAG}\"}]" ;;
+              all)     MATRIX="[{\"variant\":\"slim\",\"tag\":\"${SLIM_TAG}\"},{\"variant\":\"full\",\"tag\":\"${FULL_TAG}\"},{\"variant\":\"android\",\"tag\":\"${ANDROID_TAG}\"}]" ;;
+            esac
+          fi
+
+          echo "matrix=${MATRIX}" >> "$GITHUB_OUTPUT"
+          echo "Test matrix: ${MATRIX}"
+
+  # ------------------------------------------------------------------
+  # Job 2: Run smoke tests for each variant in parallel
+  # ------------------------------------------------------------------
+  smoke-test:
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      packages: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+
+    env:
+      IMAGE: ghcr.io/sumeramartin/holyclaude:${{ matrix.tag }}
+
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull image
+        run: docker pull "$IMAGE"
+
+      # ---- Tool presence checks ----
+
+      - name: Common tool checks
+        run: |
+          docker run --rm "$IMAGE" bash -c '
+            set -euo pipefail
+            echo "=== Claude Code ===" && claude --version
+            echo "=== Codex ===" && codex --version
+            echo "=== Gemini ===" && gemini --version
+            echo "=== Cursor ===" && cursor --version
+            echo "=== Node.js ===" && node --version
+            echo "=== Python ===" && python3 --version
+            echo "=== Git ===" && git --version
+            echo "=== GitHub CLI ===" && gh --version
+            echo "=== npm ===" && npm --version
+            echo "=== pnpm ===" && pnpm --version
+            echo "=== ripgrep ===" && rg --version
+            echo "=== jq ===" && jq --version
+            echo "=== Chromium ===" && chromium --version
+            echo "=== sqlite3 ===" && sqlite3 --version
+            echo "All common tools OK"
+          '
+
+      - name: Full-only tool checks
+        if: matrix.variant == 'full'
+        run: |
+          docker run --rm "$IMAGE" bash -c '
+            set -euo pipefail
+            echo "=== Azure CLI ===" && az --version
+            echo "=== pandoc ===" && pandoc --version | head -1
+            echo "=== ffmpeg ===" && ffmpeg -version | head -1
+            echo "=== OpenCode ===" && which opencode
+            echo "=== Junie ===" && which junie
+            echo "Full-only tools OK"
+          '
+
+      - name: Android-only tool checks
+        if: matrix.variant == 'android'
+        run: |
+          docker run --rm "$IMAGE" bash -c '
+            set -euo pipefail
+            echo "=== Java ===" && java -version 2>&1
+            echo "=== ADB ===" && adb --version
+            echo "=== sdkmanager ===" && sdkmanager --version
+            echo "=== emulator ===" && emulator -version 2>&1 | head -1
+            echo "=== SDK components ==="
+            sdkmanager --list_installed | grep -E "platforms;android-34|build-tools;34"
+            sdkmanager --list_installed | grep -E "system-images;android-34;google_apis"
+            test -d /opt/android-sdk/platform-tools
+            test -d /opt/android-sdk-avd-seed/phone34.avd
+            echo "=== Android helper scripts ==="
+            test -x /usr/local/bin/holyclaude-info
+            test -x /usr/local/bin/holyclaude-android-up
+            test -x /usr/local/bin/holyclaude-android-down
+            test -x /usr/local/bin/holyclaude-android-run
+            echo "Android-only tools OK"
+          '
+
+      # ---- File system & config checks ----
+
+      - name: File system and config checks
+        run: |
+          docker run --rm --env EXPECTED_VARIANT=${{ matrix.variant }} "$IMAGE" bash -c '
+            set -euo pipefail
+            VARIANT=$(cat /etc/holyclaude-variant)
+            echo "Variant: $VARIANT (expected: $EXPECTED_VARIANT)"
+            test "$VARIANT" = "$EXPECTED_VARIANT"
+
+            echo "Checking config files..."
+            test -f /usr/local/share/holyclaude/settings.json
+            test -f /usr/local/share/holyclaude/claude-memory-${VARIANT}.md
+
+            echo "Checking scripts are executable..."
+            test -x /usr/local/bin/entrypoint.sh
+            test -x /usr/local/bin/bootstrap.sh
+            test -x /usr/local/bin/notify.py
+
+            echo "Checking bwrap setuid..."
+            BWRAP_PERMS=$(stat -c "%a" /usr/bin/bwrap)
+            echo "bwrap permissions: $BWRAP_PERMS"
+            echo "$BWRAP_PERMS" | grep -q 4755
+
+            echo "Checking CloudCLI plugins..."
+            test -d /home/claude/.claude-code-ui/plugins/project-stats/node_modules
+            test -d /home/claude/.claude-code-ui/plugins/web-terminal/node_modules
+            test -f /home/claude/.claude-code-ui/plugins.json
+
+            echo "Checking image arch marker..."
+            test -f /etc/holyclaude-img-arch
+
+            echo "File system checks OK"
+          '
+
+      # ---- Service lifecycle test ----
+
+      - name: Prepare bind-mount directories
+        run: |
+          mkdir -p /tmp/hc-claude /tmp/hc-workspace
+          # Match default PUID/PGID (1000) so entrypoint doesn't need to chown
+          sudo chown 1000:1000 /tmp/hc-claude /tmp/hc-workspace
+
+      - name: Start container
+        run: |
+          docker run -d \
+            --name smoketest \
+            --hostname smoketest \
+            --shm-size=2g \
+            --cap-add=SYS_ADMIN \
+            --cap-add=SYS_PTRACE \
+            --security-opt=seccomp=unconfined \
+            -p 3001:3001 \
+            -v /tmp/hc-claude:/home/claude/.claude \
+            -v /tmp/hc-workspace:/workspace \
+            -e TZ=UTC \
+            "$IMAGE"
+
+      - name: Wait for healthy
+        run: |
+          echo "Waiting for container to become healthy (max 120s)..."
+          for i in $(seq 1 24); do
+            STATUS=$(docker inspect --format='{{.State.Health.Status}}' smoketest 2>/dev/null || echo "starting")
+            echo "  [$((i * 5))s] status=$STATUS"
+            if [ "$STATUS" = "healthy" ]; then
+              echo "Container is healthy!"
+              exit 0
+            fi
+            if [ "$STATUS" = "unhealthy" ]; then
+              echo "::error::Container became unhealthy"
+              docker logs smoketest
+              exit 1
+            fi
+            sleep 5
+          done
+          echo "::error::Timed out waiting for healthy status"
+          docker logs smoketest
+          exit 1
+
+      - name: Verify CloudCLI responds
+        run: curl -sf http://localhost:3001/ > /dev/null && echo "CloudCLI OK on port 3001"
+
+      - name: Verify Xvfb is running
+        run: docker exec smoketest pgrep -x Xvfb > /dev/null && echo "Xvfb OK"
+
+      - name: Verify bootstrap completed
+        run: |
+          docker exec smoketest test -f /home/claude/.claude/.holyclaude-bootstrapped && echo "Bootstrap sentinel OK"
+          docker exec smoketest test -f /home/claude/.claude/settings.json && echo "Settings copied OK"
+          docker exec smoketest test -f /home/claude/.claude/CLAUDE.md && echo "CLAUDE.md copied OK"
+
+      - name: Verify workspace writable by claude user
+        run: |
+          docker exec smoketest runuser -u claude -- touch /workspace/.smoketest
+          docker exec smoketest runuser -u claude -- rm /workspace/.smoketest
+          echo "Workspace writable OK"
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          echo "::group::Container logs"
+          docker logs smoketest 2>&1 || true
+          echo "::endgroup::"
+          echo "::group::Container inspect"
+          docker inspect smoketest 2>&1 || true
+          echo "::endgroup::"
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f smoketest 2>/dev/null || true
