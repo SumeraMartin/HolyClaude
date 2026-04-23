@@ -118,7 +118,7 @@ jobs:
             echo "=== Claude Code ===" && claude --version
             echo "=== Codex ===" && codex --version
             echo "=== Gemini ===" && gemini --version
-            echo "=== Cursor ===" && cursor --version
+            echo "=== Cursor ===" && /home/claude/.local/bin/cursor --version
             echo "=== Node.js ===" && node --version
             echo "=== Python ===" && python3 --version
             echo "=== Git ===" && git --version
