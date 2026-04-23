@@ -174,8 +174,9 @@ jobs:
 
       - name: File system and config checks
         run: |
-          docker run --rm --env EXPECTED_VARIANT=${{ matrix.variant }} "$IMAGE" bash -c '
+          docker run --rm "$IMAGE" bash -c '
             export HOME=/home/claude
+            export EXPECTED_VARIANT=${{ matrix.variant }}
             set -euo pipefail
             VARIANT=$(cat /etc/holyclaude-variant)
             echo "Variant: $VARIANT (expected: $EXPECTED_VARIANT)"
